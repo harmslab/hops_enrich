@@ -214,7 +214,7 @@ def main(argv=None):
         cluster_out_file = "{}.cluster".format(out_base) 
         cluster.cluster_seqs(sequences,
                              epsilon=parser.clusterepsilon,
-                             min_neighbors=parser.clustersize
+                             min_neighbors=parser.clustersize,
                              dist_function=parser.clusterdistance,
                              out_file=cluster_out_file)                                                            
         
