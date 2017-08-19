@@ -102,24 +102,24 @@ def main(argv=None):
     """
  
     if argv is None:
-        argv = sys.argv[:]
+        argv = sys.argv[1:]
  
     parser = argparse.ArgumentParser(description=__description__)
         
     # Positionals
-    parser.add_argument("sequence_file",help="file containing sequences of same length, on per line")
+    parser.add_argument("sequence_file",help="file containing sequences of same length, on per line",type=str,action="store")
 
     # Options 
     parser.add_argument("-e","--epsilon",help="epsilon to use for dbscan",action="store",type=int,default=1)
     parser.add_argument("-s","--size",help="minimum cluster for dbscan",action="store",type=int,default=2)
     parser.add_argument("-d","--distance",help="distance function. should be either 'simple' (Hamming) or 'dl' (Damerau-Levenshtein)",
-                        action="store",dtype=str,default="dl")
+                        action="store",type=str,default="dl")
 
-    parser.parse_args(argv)
+    args = parser.parse_args(argv)
 
     # Parse distance function
     allowable_dist = ["simple","dl"]
-    if parser.distance not in ["simple","dl"]:
+    if args.distance not in ["simple","dl"]:
         err = "--distance DISTANCE must be one of:\n"
         for d in allowable_dist:
             err += "    {}\n".format(d)
@@ -130,20 +130,19 @@ def main(argv=None):
 
     # Read seq file
     seq_list = []
-    f = open(parser.sequence_file,'r')
-    for l in lines:
-        if l.strip() == "" or l[0] == "#":
-            continue
-        seq_list.append(l.strip())
-    f.close()
+    with open(args.sequence_file,'r') as input_file:
+        for l in input_file:
+            if l.strip() == "" or l[0] == "#":
+                continue
+            seq_list.append(l.strip())
 
     seq_list = list(set(seq_list))
 
     # Do clustering
     seq_to_cluster, cluster_to_seq = cluster_seqs(seq_list,
-                                                  epsilon=parser.epsilon,
-                                                  min_neighbors=parser.size,
-                                                  dist_function=parser.distance)
+                                                  epsilon=args.epsilon,
+                                                  min_neighbors=args.size,
+                                                  dist_function=args.distance)
 
     # Create pretty output and send to stdout
     clusters = list(cluster_to_seq.keys())
