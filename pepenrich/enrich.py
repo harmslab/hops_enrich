@@ -7,6 +7,8 @@ without competitor added.
 __author__ = "Michael J. Harms"
 __date__ = "2017-08-09"
 
+from . import count, cluster
+
 import numpy as np
 import scipy.optimize, scipy.stats
 from matplotlib import pyplot as plt
@@ -431,13 +433,32 @@ def calc_enrichment(alone_counts,
 
 
     return seq_enrichment, seq_weight, seq_process
+
+def load_counts_file(filename,phred_cutoff=15,base=""):
+    """
+    Load in a counts file, deciding whether to read a fastq.gz file or text
+    file.
+    """
+
+    # First detremine the file type
+    with open(filename,'rb') as f:
+        file_start = f.read(3)
+
+    # gz file --> treat as fastq
+    if file_start.startswith(b"\x1f\x8b\x08"):
+        out_file = "_".join([base,"{}.counts".format(filename)])
+        count_dict = count.fastq_to_count(filename,phred=phred_cutoff,out_file=out_file)
+
+    # text file --> treat as counts file
+    else:
+        count_dict = count.read_counts(filename)
+     
+    return count_dict
  
 def main(argv=None):
     """
     Calculate the enrichment and write it to an output file.
     """
-
-    from . import count, cluster
     
     if argv is None:
         argv = sys.argv[1:]
@@ -445,8 +466,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__description__)
         
     # Positionals
-    parser.add_argument("alone_counts_file",help="file with counts from experiment without competitor")
-    parser.add_argument("competitor_counts_file",help="file with counts from experiment with competitor")
+    parser.add_argument("alone_counts_file",help="file with counts from experiment without competitor (fastq.gz or text)")
+    parser.add_argument("competitor_counts_file",help="file with counts from experiment with competitor (fastq.gz or text)")
  
     # Optional 
     parser.add_argument("-b","--base",help="base name for output files",action="store",type=str,default="random_string")
@@ -456,10 +477,12 @@ def main(argv=None):
                         action="store",type=int,default=8)
 
     parser.add_argument("-c","--cluster",help="use dbscan to create clusters (overrides --clusterfile)",action="store_true")
-    parser.add_argument("-e","--clusterepsilon",help="epsilon to use for dbscan (requires --cluster)",action="store",type=int,default=1)
-    parser.add_argument("-s","--clustersize",help="minimum cluster for dbscan (requires --cluster)",action="store",type=int,default=2)
-    parser.add_argument("-d","--clusterdistance",help="cluster distance function ('dl' or 'simple') (requires --cluster)",
+    parser.add_argument("-e","--cluster_epsilon",help="epsilon to use for dbscan (requires --cluster)",action="store",type=int,default=1)
+    parser.add_argument("-s","--cluster_size",help="minimum cluster for dbscan (requires --cluster)",action="store",type=int,default=2)
+    parser.add_argument("-d","--cluster_distance",help="cluster distance function ('dl' or 'simple') (requires --cluster)",
                         action="store",type=str,default='dl')
+
+    parser.add_argument("-p","--fastq_phred",help="phred cutoff to use for processing fastq files",action="store",type=int,default=15)
 
     args = parser.parse_args(argv)
 
@@ -471,8 +494,8 @@ def main(argv=None):
         out_base = args.base  
 
     # Read in counts
-    alone_counts = count.read_counts(args.alone_counts_file)
-    competitor_counts = count.read_counts(args.competitor_counts_file)
+    alone_counts = load_counts_file(args.alone_counts_file,args.fastq_phred,args.base)
+    competitor_counts = load_counts_file(args.competitor_counts_file,args.fastq_phred,args.base)
 
     # If the user requests the clustering is done on-the-fly, do it here.  Use
     # all counts, regardless of min cutoff, to maximize the number of sequences
@@ -485,14 +508,14 @@ def main(argv=None):
    
         cluster_out_file = "{}.cluster".format(out_base) 
         seq_to_cluster, cluster_to_seq = cluster.cluster_seqs(sequences,
-                                                              epsilon=args.clusterepsilon,
-                                                              min_neighbors=args.clustersize,
-                                                              dist_function=args.clusterdistance,
+                                                              epsilon=args.cluster_epsilon,
+                                                              min_neighbors=args.cluster_size,
+                                                              dist_function=args.cluster_distance,
                                                               out_file=cluster_out_file) 
     else:
         seq_to_cluster = None
         if args.clusterfile is not None:
-            seq_to_cluster, cluster_to_seq = cluster.read_cluster_file(args.clusterfile)
+            seq_to_cluster, cluster_to_seq = cluster.read_cluster_file(args.cluster_file)
         
     # Calculate enrichments 
     enrich, weight, process = calc_enrichment(alone_counts,
@@ -502,6 +525,9 @@ def main(argv=None):
                                               noise=args.noise,
                                               out_file="{}.enrich".format(out_base))
                    
+
+
+
  
 if __name__ == "__main__":
     main()

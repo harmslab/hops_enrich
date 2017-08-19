@@ -237,10 +237,10 @@ def main(argv=None):
 
     args = parser.parse_args(argv)
 
-    if args.out_file is None:
+    if args.out is None:
         out_file = "{}.counts".format(args.fastq_file)
     else:
-        out_file = args.out_file
+        out_file = args.out
 
     out_dict = fastq_to_count(fastq_filename=args.fastq_file,
                               phred=args.phred,
