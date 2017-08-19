@@ -176,10 +176,10 @@ def find_process_probability(enrich_dict,breaks=None,plot_name=None):
         areas_guess = np.ones(i,dtype=float)
 
         # Do fit
-        fit_means, fit_stds, fit_areas, ssr =  fitter(mids,prob,
-                                                      means_guess,
-                                                      stds_guess,
-                                                      areas_guess)
+        fit_means, fit_stds, fit_areas, ssr =  _fitter(mids,prob,
+                                                       means_guess,
+                                                       stds_guess,
+                                                       areas_guess)
     
         # Record fit results
         ssr_list.append(ssr)

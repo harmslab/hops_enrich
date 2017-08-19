@@ -35,8 +35,8 @@ def calc_enrichment(out_base,
     competitor_freq, competitor_count = count.read_counts(competitor_counts_file,min_counts)
 
     # Create a set of all unique sequences
-    sequences = list(alone_freqs.keys())
-    sequences.extend(competitor_freqs.keys())
+    sequences = list(alone_freq.keys())
+    sequences.extend(competitor_freq.keys())
     sequences = set(sequences)
 
     # Read in clusters if a file is specified
@@ -126,10 +126,10 @@ def calc_enrichment(out_base,
         
         # Try to calculate the enrichment straight up 
         try:
-            enrichment = np.log(competitor_freq[s]/alone_freq[s])
+            enrichment = np.log(competitor_freq[seq]/alone_freq[seq])
 
-            c = competitor_count[s]
-            a = alone_count[s]
+            c = competitor_count[seq]
+            a = alone_count[seq]
 
             c_err = np.sqrt(c)
             a_err = np.sqrt(a)
@@ -207,8 +207,12 @@ def main(argv=None):
     # and more effectively cluster the space
     if parser.cluster:
 
-        sequences = count.read_counts(parser.alone_counts_file,min_counts=0)
-        sequences.extend(count.read_counts(parser.competitor_counts_file,min_counts=0))
+        freq, counts = count.read_counts(parser.alone_counts_file,min_counts=0)
+        sequences = list(counts.dict())
+
+        freq, counts = count.read_counts(parser.competitor_counts_file,min_counts=0)
+        sequences.extend(list(counts.dict()))
+
         sequences = list(set(sequences))
    
         cluster_out_file = "{}.cluster".format(out_base) 
