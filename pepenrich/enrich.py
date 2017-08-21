@@ -161,7 +161,7 @@ def find_process_probability(enrich_dict,breaks=None,plot_name=None):
     if breaks is None:
         ten_pct = (np.max(values) - np.min(values))*0.1
         breaks = (np.min(values) - ten_pct,np.max(values) + ten_pct,40)
-        
+   
     # Construct histogram of frequencies
     counts, bins = np.histogram(values,bins=np.linspace(*breaks))
     mids = (bins[1:]+bins[:-1])/2
@@ -253,18 +253,46 @@ def _process_counts(count_dict,min_counts=1):
             filtered_counts[k] = count_dict[k]
 
     freq = {}
+    std = {}
     total = 1.0*np.sum(list(filtered_counts.values()))
     for k in filtered_counts.keys():
-        freq[k] = filtered_counts[k]/total 
 
-    return filtered_counts, freq
+        f = filtered_counts[k]/total
+
+        s = np.sqrt(filtered_counts[k])/total
+        s = np.abs(np.log(f + s) - np.log(f))
+
+        freq[k] = np.log(f)
+        std[k] = s
+
+    return freq, std
+
+def _cluster_mean_std(cluster_freq):
+    """
+    Calculate mean and standard deviation of values in a ditionary.  Take log,
+    as this normalizes distribution.
+    """
+
+    cluster_mean = {}
+    cluster_std  = {}
+    for c in cluster_freq.keys():
+
+        obs = cluster_freq[c]
+        if len(obs) == 0:
+            continue
+
+        cluster_mean[c] = np.mean(obs)
+        cluster_std[c] =   np.std(obs)
+
+    return cluster_mean, cluster_std
 
 def calc_enrichment(alone_counts,
                     competitor_counts,
                     seq_to_cluster=None,
                     min_counts=8,
                     noise=0.000001,
-                    out_file=None):
+                    out_file=None,
+                    header=None):
     """
     Calculate enrichments from counts files and clusters.
 
@@ -275,11 +303,13 @@ def calc_enrichment(alone_counts,
                     clusters.
     min_counts: exclude any sequence with counts less than min_counts
     noise: noise to inject into cluster enrichment (avoids numerical errors)
+    out_file: string or None.  file to write out to.  if None, do not write file
+    header: string or None.  header to place in file.  If None, do not write header
     """  
 
     # Determine the frequencies of sequences in the alone and competitor data
-    alone_counts, alone_freq = _process_counts(alone_counts,min_counts)
-    competiior_counts, competitor_freq = _process_counts(competitor_counts,min_counts)
+    alone_freq, alone_std = _process_counts(alone_counts,min_counts)
+    competitor_freq, competitor_std = _process_counts(competitor_counts,min_counts)
 
     # Create a set of all unique sequences
     sequences = list(alone_freq.keys())
@@ -295,15 +325,17 @@ def calc_enrichment(alone_counts,
     else:
         cluster_to_seq = {}
         for s in seq_to_cluster.keys():
+            
+            c = seq_to_cluster[s]
             try:
-                cluster_to_seq[s].append(seq_to_cluster[s])
+                cluster_to_seq[c].append(s)
             except KeyError:
-                cluster_to_seq[s] = [seq_to_cluster[s]]
-        
+                cluster_to_seq[c] = [s]
+
     # Go through all clusters and record freqencies and counts for all sequences
     # in the cluster
-    cluster_freq = {}
-    cluster_stdev = {}
+    cluster_alone_freq = {}
+    cluster_competitor_freq = {}
     for c in cluster_to_seq.keys():
 
         # Skip cluster 0, which are the sequences that did not end up in a
@@ -312,48 +344,90 @@ def calc_enrichment(alone_counts,
             continue
 
         # Go through all sequences in this cluster
-        cluster_freq[c] =  [0.0,0.0]
-        cluster_stdev[c] = []
+        cluster_alone_freq[c] =  []
+        cluster_competitor_freq[c] = []
         for s in cluster_to_seq[c]:
 
             # Grab alone frequencies if sequence seen in that experiment    
             try:
-                cluster_freq[c][0]  += alone_freq[s]
+                cluster_alone_freq[c].append(alone_freq[s])
             except KeyError:
                 pass
 
             # Grab competitor frequencies if sequence seen in that experiment
             try:
-                cluster_freq[c][1]  += competitor_freq[s]
+                cluster_competitor_freq[c].append(competitor_freq[s])
             except KeyError:
                 pass 
 
-            # Try to calculate individual enrichment for this sequence.  This
-            # will be used to calculate the standard deviation of enrichment
-            # within this cluster
+    cluster_alone_mean, cluster_alone_std = _cluster_mean_std(cluster_alone_freq)
+    cluster_competitor_mean, cluster_competitor_std = _cluster_mean_std(cluster_competitor_freq)
+
+    # --------------------- End processing of clusters ------------------------
+
+    # Go through all sequences and record enrichment and weight.  First try to 
+    # get sequence frequency directly from sequence.  Then try to get from the 
+    # cluster of which that sequence is a member.  If this fails, discard the
+    # sequence.
+    seq_enrichment = {}
+    seq_weight = {}
+    seq_source = {} 
+    for seq in sequences:
+
+        # Get alone frequency and uncertainty
+        alone_source = None
+        try:
+            alone = alone_freq[seq]
+            alone_err = alone_std[seq]
+            alone_source = "s"
+        except KeyError:
             try:
-                cluster_stdev[c].append(np.log(competitor_freq[s]/alone_freq[s]))
+                c = seq_to_cluster[seq]
+                alone = cluster_alone_mean[c]
+                alone_err = cluster_alone_std[c]  
+                alone_source = "c"
             except KeyError:
                 pass
 
-    # Record final cluster enrichment. This will only record if both the alone
-    # and competitor have non-zero frequencies.
-    cluster_enrichment = {}
-    cluster_weight = {}
-    for c in cluster_freq.keys():
+        if alone_source is None:
+            continue
 
-        if cluster_freq[c][0] > 0.0 and cluster_freq[c][1] > 0.0:
-            cluster_enrichment[c] = np.log(cluster_freq[c][1]/cluster_freq[c][0]) 
-           
-            # Record weight for this cluster 
-            if len(cluster_stdev[c]) > 1:
-                cluster_weight[c] = 1/(np.std(cluster_stdev[c])**2)
-            else:
-                cluster_weight[c] = np.nan
+        # Get competitor frequency and uncertainty
+        competitor_source = None
+        try:
+            competitor = competitor_freq[seq]
+            competitor_err = competitor_std[seq]
+            competitor_source = "s"
+        except KeyError:
+            try:
+                c = seq_to_cluster[seq]
+                competitor = cluster_competitor_mean[c]
+                competitor_err = cluster_competitor_std[c]  
+                competitor_source = "c"
+            except KeyError:
+                pass
 
-    # Find the lowest cluster weight, ignoring any nan.  If there are only nan,
+        if competitor_source is None:
+            continue
+     
+        print(competitor,alone) 
+        enrichment = competitor - alone
+
+        sigma = np.sqrt((alone*alone_err)**2 + (competitor*competitor_err)**2)
+        weight = 1/(sigma**2)
+
+        seq_enrichment[seq] = enrichment
+        seq_weight[seq] = weight
+        seq_source[seq] = "{}{}".format(alone_source,competitor_source)
+
+    # Final list of good sequences
+    final_sequences = list(seq_enrichment.keys())
+
+    # ----------------------- Noramlize weights ----------------------------- #
+
+    # Find the lowest weight, ignoring any nan.  If there are only nan,
     # assign everyone an even weight.
-    weights = np.array(list(cluster_weight.values()))
+    weights = np.array(list(seq_weight.values()))
     non_nan_weights = weights[~np.isnan(weights)]
     if len(non_nan_weights) > 0:
         lowest_weight = np.min(non_nan_weights)
@@ -361,53 +435,15 @@ def calc_enrichment(alone_counts,
         lowest_weight = 1.0
 
     # Assign nan weights to the lowest weight observed
-    for c in cluster_weight.keys():
-        if np.isnan(cluster_weight[c]):
-            cluster_weight[c] = lowest_weight
-
-    # --------------------- End processing of clusters ------------------------
-
-    # Go through all sequences and record enrichment and weight.  First try to 
-    # calculate enrichment directly from frequencies of individual sequences in 
-    # the alone and competitor experiments. If this fails, grab the enrichment
-    # and weight from the cluster associated with that sequence. If this fails, 
-    # discard the sequence.
-    seq_enrichment = {}
-    seq_weight = {}
-    for seq in sequences:
-        
-        # Try to calculate the enrichment straight up 
-        try:
-            enrichment = np.log(competitor_freq[seq]/alone_freq[seq])
-
-            c = competitor_counts[seq]
-            a = alone_counts[seq]
-
-            c_err = np.sqrt(c)
-            a_err = np.sqrt(a)
-
-            sigma = (c/a)*np.sqrt((c_err/c)**2 + (a_err/a)**2)
-            
-            weight = 1/(sigma**2)
-
-        except KeyError:
-
-            # If this fails, try the cluster enrichment.  Inject a tiny bit of 
-            # noise so a whole bunch of sequences do not have the same value.
-            # This prevents a downstream numerical problem in regression.
-            try:
-                cluster = seq_to_cluster[seq]
-                enrichment = cluster_enrichment[cluster] + np.random.normal(0,noise)
-                weight = cluster_weight[cluster]
-            except KeyError:
-                continue
-            
-        seq_enrichment[seq] = enrichment
-        seq_weight[seq] = weight
-
-    # Final list of good sequences
-    final_sequences = list(seq_enrichment.keys())
-
+    for c in seq_weight.keys():
+        if np.isnan(seq_weight[c]):
+            seq_weight[c] = lowest_weight
+       
+    # Normalize to one
+    total = np.sum(list(seq_weight.values()))
+    for c in seq_weight.keys():
+        seq_weight[c] = seq_weight[c]/total
+ 
     # Find the probability that each sequence derives from a competitor-induced 
     # versus random binding process based on the distribution of enrichment
     # values.
@@ -416,16 +452,17 @@ def calc_enrichment(alone_counts,
     if out_file is not None:
 
         out = []
-        #out.append("# alone counts file: {}".format(args.alone_counts_file))
-        #out.append("# competitor counts file: {}".format(args.competitor_counts_file))
-        #out.append("# cluster file: {}".format(cluster_file))
-        #out.append("# mininum counts: {}".format(args.min_counts))
-        #out.append("# noise: {}".format(args.noise))
 
-        for seq in seq_enrichment.keys(): 
-            out.append("{} {:20.10e} {:20.10e} {:20.10e}".format(seq,seq_enrichment[seq],
-                                                                     seq_weight[seq],
-                                                                     seq_process[seq]))
+        if header is not None:
+            out.append(header)
+
+        seq_list = list(seq_enrichment.keys())
+        seq_list.sort()
+        for seq in seq_list:
+            out.append("{} {:20.10e} {:20.10e} {:20.10e} {:5s}".format(seq,seq_enrichment[seq],
+                                                                       seq_weight[seq],
+                                                                       seq_process[seq],
+                                                                       seq_source[seq]))
  
         f = open(out_file,"w")
         f.write("\n".join(out))
@@ -515,17 +552,39 @@ def main(argv=None):
     else:
         seq_to_cluster = None
         if args.clusterfile is not None:
-            seq_to_cluster, cluster_to_seq = cluster.read_cluster_file(args.cluster_file)
+            seq_to_cluster, cluster_to_seq = cluster.read_cluster_file(args.clusterfile)
         
+    header = []
+    header.append("# alone counts file: {}".format(args.alone_counts_file))
+    header.append("# competitor counts file: {}".format(args.competitor_counts_file))
+    if args.alone_counts_file[-3:] == ".gz" or args.competitor_counts_file[-3:] == ".gz":
+        header.append("# phred cutoff: {}".format(args.fastq_phred))
+
+    header.append("# mininum counts: {}".format(args.mincounts))
+    header.append("# noise: {}".format(args.noise))
+    
+    if args.cluster:
+        header.append("# cluster?: yes")
+        header.append("#    cluster epsilon: {}".format(args.cluster_epsilon))
+        header.append("#    cluster size: {}".format(args.cluster_size))
+        header.append("#    cluster distance function: {}".format(args.cluster_distance))
+    else:
+        if args.clusterfile is not None:
+            header.append("# cluster file: {}".format(args.clusterfile))
+
+    header = "\n".join(header)
+
     # Calculate enrichments 
     enrich, weight, process = calc_enrichment(alone_counts,
                                               competitor_counts,
                                               seq_to_cluster=seq_to_cluster,
                                               min_counts=args.mincounts,
                                               noise=args.noise,
-                                              out_file="{}.enrich".format(out_base))
-                   
+                                              out_file="{}.enrich".format(out_base),
+                                              header=header)
+    
 
+    
 
 
  
