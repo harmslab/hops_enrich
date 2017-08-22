@@ -15,6 +15,8 @@ from matplotlib import pyplot as plt
 
 import sys, argparse
 
+from multiprocessing import Process, Queue
+
 def _multi_gaussian(x,means,stds,areas):
     """
     Function calculating multiple gaussians (built from
@@ -240,7 +242,7 @@ def find_process_probability(enrich_dict,breaks=None,plot_name=None):
         out_dict[seq] = weight
             
     return out_dict
-    
+
 def _process_counts(count_dict,min_counts=1):
     """
     Process counts dictionary, removing low-count sequences and determining 
@@ -266,31 +268,54 @@ def _process_counts(count_dict,min_counts=1):
         std[k] = s
 
     return freq, std
-
-def _cluster_mean_std(cluster_freq):
+    
+def _process_clusters(seq_to_cluster,seq_freq,cluster_size_cutoff=3):
     """
     Calculate mean and standard deviation of values in a ditionary.  Take log,
     as this normalizes distribution.
     """
 
+    # Create a dictionary mapping clusters to sequences
+    cluster_freq = {}
+    for s in seq_to_cluster.keys():
+
+        # Only consider sequences with measured frequencies
+        try:
+            freq = seq_freq[s]
+        except KeyError:
+            continue
+           
+        c = seq_to_cluster[s]
+        try:
+            cluster_freq[c].append(freq)
+        except KeyError:
+            cluster_freq[c] = [freq]
+
+    # Find mean and standard deviation of frequencies of peptides in this 
+    # cluster.  If there are  less than cluster_size_cutoff observations,
+    # do not record it
     cluster_mean = {}
     cluster_std  = {}
     for c in cluster_freq.keys():
 
         obs = cluster_freq[c]
-        if len(obs) == 0:
+
+        if len(obs) < cluster_size_cutoff:
             continue
 
-        cluster_mean[c] = np.mean(obs)
+        cluster_mean[c] = np.log(np.sum(np.exp(obs)))
         cluster_std[c] =   np.std(obs)
 
     return cluster_mean, cluster_std
 
+
+
 def calc_enrichment(alone_counts,
                     competitor_counts,
                     seq_to_cluster=None,
-                    min_counts=8,
+                    min_counts=6,
                     noise=0.000001,
+                    cluster_size_cutoff=3,
                     out_file=None,
                     header=None):
     """
@@ -303,6 +328,8 @@ def calc_enrichment(alone_counts,
                     clusters.
     min_counts: exclude any sequence with counts less than min_counts
     noise: noise to inject into cluster enrichment (avoids numerical errors)
+    cluster_size_cutoff: minimum number of cluster members with observations before that 
+                         cluster can be used.
     out_file: string or None.  file to write out to.  if None, do not write file
     header: string or None.  header to place in file.  If None, do not write header
     """  
@@ -311,64 +338,38 @@ def calc_enrichment(alone_counts,
     alone_freq, alone_std = _process_counts(alone_counts,min_counts)
     competitor_freq, competitor_std = _process_counts(competitor_counts,min_counts)
 
-    # Create a set of all unique sequences
-    sequences = list(alone_freq.keys())
-    sequences.extend(competitor_freq.keys())
+    # Grab **every** sequence, including those that do not pass our counting 
+    # threshold.
+    all_alone_freq, all_alone_std = _process_counts(alone_counts,0)
+    all_competitor_freq, all_competitor_std = _process_counts(competitor_counts,0)
+
+    sequences = list(all_alone_freq.keys())
+    sequences.extend(all_competitor_freq.keys())
     sequences = set(sequences)
 
-    # ---------------------- Process clusters ---------------------------------
+    # Load in clusters as a function of epsilon
+    seq_to_cluster = []
+    cluster_alone_mean = []
+    cluster_alone_std = []
+    cluster_competitor_mean = []
+    cluster_competitor_std = []
+    for i in range(1,13):
 
-    # Create a dictionary mapping clusters to sequences
-    if seq_to_cluster is None:
-        seq_to_cluster = {}
-        cluster_to_seq = {}
-    else:
-        cluster_to_seq = {}
-        for s in seq_to_cluster.keys():
-            
-            c = seq_to_cluster[s]
-            try:
-                cluster_to_seq[c].append(s)
-            except KeyError:
-                cluster_to_seq[c] = [s]
+        filename = "/home/harmsm/s100-specificity-pipeline/00_phage-display/02_clusters/hA5_all_{}.txt".format(i)
+        s2c, c2s = cluster.read_cluster_file(filename)
+        seq_to_cluster.append(s2c)
 
-    # Go through all clusters and record freqencies and counts for all sequences
-    # in the cluster
-    cluster_alone_freq = {}
-    cluster_competitor_freq = {}
-    for c in cluster_to_seq.keys():
+        c_a_m, c_a_s = _process_clusters(s2c,alone_freq,cluster_size_cutoff)
+        cluster_alone_mean.append(c_a_m)
+        cluster_alone_std.append(c_a_s)
 
-        # Skip cluster 0, which are the sequences that did not end up in a
-        # cluster
-        if c == 0:
-            continue
-
-        # Go through all sequences in this cluster
-        cluster_alone_freq[c] =  []
-        cluster_competitor_freq[c] = []
-        for s in cluster_to_seq[c]:
-
-            # Grab alone frequencies if sequence seen in that experiment    
-            try:
-                cluster_alone_freq[c].append(alone_freq[s])
-            except KeyError:
-                pass
-
-            # Grab competitor frequencies if sequence seen in that experiment
-            try:
-                cluster_competitor_freq[c].append(competitor_freq[s])
-            except KeyError:
-                pass 
-
-    cluster_alone_mean, cluster_alone_std = _cluster_mean_std(cluster_alone_freq)
-    cluster_competitor_mean, cluster_competitor_std = _cluster_mean_std(cluster_competitor_freq)
-
-    # --------------------- End processing of clusters ------------------------
+        c_c_m, c_c_s = _process_clusters(s2c,competitor_freq,cluster_size_cutoff)
+        cluster_competitor_mean.append(c_c_m)
+        cluster_competitor_std.append(c_c_s)
 
     # Go through all sequences and record enrichment and weight.  First try to 
-    # get sequence frequency directly from sequence.  Then try to get from the 
-    # cluster of which that sequence is a member.  If this fails, discard the
-    # sequence.
+    # get sequence frequency directly from sequence.  If this fails, try to get
+    # frequency from increasingly coarse-grained clusters (increasing epsilon)
     seq_enrichment = {}
     seq_weight = {}
     seq_source = {} 
@@ -377,48 +378,51 @@ def calc_enrichment(alone_counts,
         # Get alone frequency and uncertainty
         alone_source = None
         try:
+            raise KeyError() # hack to force coarse-graining
             alone = alone_freq[seq]
             alone_err = alone_std[seq]
-            alone_source = "s"
+            alone_source = 0
         except KeyError:
-            try:
-                c = seq_to_cluster[seq]
-                alone = cluster_alone_mean[c]
-                alone_err = cluster_alone_std[c]  
-                alone_source = "c"
-            except KeyError:
-                pass
 
-        if alone_source is None:
-            continue
+            epsilon = 1
+            while alone_source is None:
+
+                try:
+                    c = seq_to_cluster[epsilon-1][seq]
+                    alone = cluster_alone_mean[epsilon-1][c]
+                    alone_err = cluster_alone_std[epsilon-1][c]  
+                    alone_source = epsilon
+                except KeyError:
+                    epsilon += 1
 
         # Get competitor frequency and uncertainty
         competitor_source = None
         try:
+            raise KeyError() # hack to force coarse-graining
             competitor = competitor_freq[seq]
             competitor_err = competitor_std[seq]
-            competitor_source = "s"
+            competitor_source = 0
         except KeyError:
-            try:
-                c = seq_to_cluster[seq]
-                competitor = cluster_competitor_mean[c]
-                competitor_err = cluster_competitor_std[c]  
-                competitor_source = "c"
-            except KeyError:
-                pass
 
-        if competitor_source is None:
-            continue
-     
-        print(competitor,alone) 
+            epsilon = 1
+            while competitor_source is None:
+
+                try:
+                    c = seq_to_cluster[epsilon][seq]
+                    competitor = cluster_competitor_mean[epsilon-1][c]
+                    competitor_err = cluster_competitor_std[epsilon-1][c]  
+                    competitor_source = epsilon
+                except KeyError:
+                    epsilon += 1
+
         enrichment = competitor - alone
 
         sigma = np.sqrt((alone*alone_err)**2 + (competitor*competitor_err)**2)
-        weight = 1/(sigma**2)
+        weight = 1/sigma
 
-        seq_enrichment[seq] = enrichment
+        seq_enrichment[seq] = enrichment + np.random.normal(0,noise)
         seq_weight[seq] = weight
-        seq_source[seq] = "{}{}".format(alone_source,competitor_source)
+        seq_source[seq] = "{}-{}".format(alone_source,competitor_source)
 
     # Final list of good sequences
     final_sequences = list(seq_enrichment.keys())
