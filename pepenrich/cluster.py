@@ -156,4 +156,6 @@ def main(argv=None):
     return "\n".join(out)
 
 if __name__ == "__main__":
-    print(main())
+    out = main()
+
+    print(out)
