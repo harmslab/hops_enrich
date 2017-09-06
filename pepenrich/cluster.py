@@ -10,7 +10,7 @@ import fast_dbscan
 
 import numpy as np
 
-import sys, argparse
+import sys, argparse, os
 
 def read_cluster_file(clusters):
     """
@@ -114,6 +114,7 @@ def main(argv=None):
     parser.add_argument("-s","--size",help="minimum cluster for dbscan",action="store",type=int,default=2)
     parser.add_argument("-d","--distance",help="distance function. should be either 'simple' (Hamming) or 'dl' (Damerau-Levenshtein)",
                         action="store",type=str,default="dl")
+    parser.add_argument("-o","--outfile",help="output file name",action="store",type=str,default=None)
 
     args = parser.parse_args(argv)
 
@@ -127,6 +128,16 @@ def main(argv=None):
         err += "\n"
 
         raise ValueError(err)
+
+    if args.outfile is None:
+        out_file = "{}.cluster".format(args.sequence_file)
+    else:
+        out_file = args.outfile
+
+    if os.path.isfile(out_file):
+        err = "output file '{}' already exists.\n".format(out_file)
+        raise ValueError(err)
+    
 
     # Read seq file
     seq_list = []
@@ -152,10 +163,10 @@ def main(argv=None):
     for c in clusters:
         for s in cluster_to_seq[c]:
             out.append("{} {}".format(c,s)) 
-        
-    return "\n".join(out)
+    
+    f = open(out_file,'w')
+    f.write("\n".join(out))    
+    f.close()
 
 if __name__ == "__main__":
-    out = main()
-
-    print(out)
+    main()

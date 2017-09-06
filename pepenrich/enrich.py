@@ -377,7 +377,8 @@ def calc_enrichment(alone_counts,
     # to get them individually (i.e. they are their own cluster).  
     seq_enrichment = {}
     seq_weight = {}
-    seq_source = {} 
+    seq_source = {}
+    seq_seqlevel_e = {}
     for seq in sequences:
            
         # First try to grab cluster sequences 
@@ -394,7 +395,7 @@ def calc_enrichment(alone_counts,
             source = "c"
         
         except KeyError:
-    
+ 
             # Try singles -- cluster with only one sequence
             try:
 
@@ -403,6 +404,7 @@ def calc_enrichment(alone_counts,
 
                 competitor = competitor_freq[seq]
                 competitor_err = competitor_std[seq]
+
     
                 source = "s"
             
@@ -412,6 +414,12 @@ def calc_enrichment(alone_counts,
         # Either alone or competitor could not be assigned
         if source is None:
             continue
+
+        # Record individual freq, if calculable
+        try:
+            seq_seqlevel_e[seq] = competitor_freq[seq] - alone_freq[seq]
+        except KeyError:
+            pass
 
         # Determine enrichments
         enrichment = competitor - alone
@@ -462,9 +470,14 @@ def calc_enrichment(alone_counts,
         seq_list = list(seq_enrichment.keys())
         seq_list.sort()
         for seq in seq_list:
-            out.append("{} {:20.10e} {:20.10e} {:20.10e} {:5s}".format(seq,seq_enrichment[seq],
+            try:
+                seqlevel = seq_seqlevel_e[seq]
+            except KeyError:
+                seqlevel = np.nan
+            out.append("{} {:20.10e} {:20.10e} {:20.10e} {:20.10e} {:5s}".format(seq,seq_enrichment[seq],
                                                                        seq_weight[seq],
                                                                        seq_process[seq],
+                                                                       seqlevel,
                                                                        seq_source[seq]))
  
         f = open(out_file,"w")
