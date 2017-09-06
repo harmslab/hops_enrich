@@ -469,6 +469,13 @@ def calc_enrichment(alone_counts,
 
         seq_list = list(seq_enrichment.keys())
         seq_list.sort()
+
+        local_header = ["#"]
+        seq_fmt = "{{:>{:d}}}".format(len(seq_list[0])-1)
+        local_header.append(seq_fmt.format("seq"))
+        local_header.append(" {:>20s} {:>20s} {:>20s} {:>20s} {:5}".format("E","weight","process","E_from_seq","src"))
+        out.append("".join(local_header))
+
         for seq in seq_list:
             try:
                 seqlevel = seq_seqlevel_e[seq]
