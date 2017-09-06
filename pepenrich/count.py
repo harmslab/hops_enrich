@@ -17,14 +17,9 @@ import os, gzip, pickle, re, sys, argparse
 
 class FastqSeqCounter:
     """
-    Class for converting a set of fastq nucleotide sequences, collected over 
-    multiple rounds of selection, and turning them into a single dictionary of the
-    form:
-
-    {"seq1":[10,20,100,...]}
-
-    where the integers count the number of times that this sequence was seen in 
-    each round.  
+    Class for converting a set of fastq nucleotide sequences into a dictionary 
+    mapping peptide sequences to counts.  Does quality control as part of the
+    processing.
     """
 
     def __init__(self,bad_pattern="[*X]",seq_length=12,phred_cutoff=15):
@@ -142,12 +137,16 @@ class FastqSeqCounter:
                     err = "could not parse file\n"
                     raise ValueError(err)
 
+                we_failed = False
+                if sequence[36:54] != "GGCGGCGGCTCGGCCGAA":
+                    we_failed = True
+
                 # Translate the sequence
                 sequence = self._translate(sequence)
 
                 # Record it in either the good or bad dict, depending on its
                 # quality score
-                if self._qualityCheck(sequence,phred):
+                if self._qualityCheck(sequence,phred) and not we_failed:
 
                     key = sequence[0:self._seq_length]
                     try:
@@ -200,11 +199,10 @@ def fastq_to_count(fastq_filename,phred=15,out_file=None):
 
     return good_counts
 
-def read_counts(count_file,min_counts=0):
+def read_counts(count_file):
     """
     Read a file containing sequences vs. counts.  Returns a dictionary of 
-    frequencies keyed to sequences.  Frequency is determined relative to all 
-    counts in the library.
+    frequencies keyed to sequences.  
     """
 
     f = open(count_file,'r')
@@ -212,26 +210,17 @@ def read_counts(count_file,min_counts=0):
     f.close()
 
     count_dict = {}
-    total = 0
     for l in lines:
         if l.strip() == "" or l[0] == "#":
             continue
 
         col = l.split()
         seq = col[0].strip()
-        counts = float(col[1])
-
-        if counts < min_counts:
-            continue
+        counts = int(col[1])
 
         count_dict[seq] = counts
-        total += counts
 
-    freq_out_dict = {}
-    for k in count_dict.keys():
-        freq_out_dict[k] = count_dict[k]/total
-
-    return freq_out_dict, count_dict
+    return count_dict
 
 def main(argv=None):
     """
@@ -239,7 +228,7 @@ def main(argv=None):
     """
 
     if argv is None:
-        argv = sys.argv[:]
+        argv = sys.argv[1:]
 
     parser = argparse.ArgumentParser(description=__description__)
         
@@ -250,15 +239,15 @@ def main(argv=None):
     parser.add_argument("-p","--phred",help="phred cutoff",action="store",type=int,default=15)
     parser.add_argument("-o","--out",help="output file",action="store",type=str,default=None)
 
-    parser.parse_args(argv)
+    args = parser.parse_args(argv)
 
-    if parser.out_file is None:
-        out_file = "{}.counts".format(parser.fastq_file)
+    if args.out is None:
+        out_file = "{}.counts".format(args.fastq_file)
     else:
-        out_file = parser.out_file
+        out_file = args.out
 
-    out_dict = fastq_to_count(fastq_filename=parser.fastq_file,
-                              phred=parser.phred,
+    out_dict = fastq_to_count(fastq_filename=args.fastq_file,
+                              phred=args.phred,
                               out_file=out_file)
     
 if __name__ == "__main__":
