@@ -117,7 +117,7 @@ class FastqSeqCounter:
         with gzip.open(fastq_file,'r+') as f:
        
             for l in f:
-            
+           
                 l_ascii = l.decode("ascii")
 
                 if line_counter == 0:
@@ -137,16 +137,12 @@ class FastqSeqCounter:
                     err = "could not parse file\n"
                     raise ValueError(err)
 
-                we_failed = False
-                if sequence[36:54] != "GGCGGCGGCTCGGCCGAA":
-                    we_failed = True
-
                 # Translate the sequence
                 sequence = self._translate(sequence)
 
                 # Record it in either the good or bad dict, depending on its
                 # quality score
-                if self._qualityCheck(sequence,phred) and not we_failed:
+                if self._qualityCheck(sequence,phred):
 
                     key = sequence[0:self._seq_length]
                     try:
@@ -186,6 +182,10 @@ def fastq_to_count(fastq_filename,phred=15,out_file=None):
 
     # Count
     good_counts, bad_counts = p.processFastqFile(fastq_filename)
+
+    if len(good_counts) == 0:
+        err = "No sequences passed quality control.\n"
+        raise ValueError(err)
 
     if out_file is not None:
         f = open(out_file,'w')
