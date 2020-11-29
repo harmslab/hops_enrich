@@ -6,7 +6,7 @@ similar sequences, determines enrichment, and determines the probability that a
 sequence arose from an enrichment versus random binding process.
 """
 
-__version__ = "v0.1"
+__version__ = "v0.1.1"
 
 import sys 
 if sys.version_info[0] < 3:
